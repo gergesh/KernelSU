@@ -1,0 +1,172 @@
+name: Build Kernel - Android 15 AVD (Emulator)
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: 'Architecture'
+        required: true
+        type: choice
+        options:
+          - arm64-v8a
+          - x86_64
+        default: 'arm64-v8a'
+
+jobs:
+  build:
+    name: Build Android 15 AVD Kernel (${{ github.event.inputs.arch }})
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 2048
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+
+      - name: Checkout KernelSU
+        uses: actions/checkout@v5
+        with:
+          path: KernelSU
+          fetch-depth: 0
+
+      - name: Setup kernel source
+        run: |
+          echo "Free space:"
+          df -h
+          cd $GITHUB_WORKSPACE
+          sudo apt-get install repo -y
+          mkdir android-kernel && cd android-kernel
+
+          # Use the manifest for Android 15 AVD
+          if [ "${{ github.event.inputs.arch }}" == "arm64-v8a" ]; then
+            MANIFEST_FILE=$GITHUB_WORKSPACE/KernelSU/.github/manifests/android-15-avd_aarch64.xml
+          else
+            MANIFEST_FILE=$GITHUB_WORKSPACE/KernelSU/.github/manifests/android-15-avd_x86_64.xml
+          fi
+
+          repo init --depth=1 -u https://android.googlesource.com/kernel/manifest --repo-rev=v2.16
+          cp $MANIFEST_FILE .repo/manifests/default.xml
+
+          repo --version
+          repo --trace sync -c -j$(nproc --all) --no-tags
+          df -h
+
+      - name: Setup KernelSU
+        run: |
+          cd $GITHUB_WORKSPACE/android-kernel
+          echo "[+] KernelSU setup"
+          GKI_ROOT=$(pwd)
+          echo "[+] GKI_ROOT: $GKI_ROOT"
+          echo "[+] Copy KernelSU driver to $GKI_ROOT/common/drivers"
+          ln -sf $GITHUB_WORKSPACE/KernelSU/kernel $GKI_ROOT/common/drivers/kernelsu
+
+          echo "[+] Add KernelSU driver to Makefile"
+          DRIVER_MAKEFILE=$GKI_ROOT/common/drivers/Makefile
+          DRIVER_KCONFIG=$GKI_ROOT/common/drivers/Kconfig
+          grep -q "kernelsu" "$DRIVER_MAKEFILE" || printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> "$DRIVER_MAKEFILE"
+          grep -q "kernelsu" "$DRIVER_KCONFIG" || sed -i "/endmenu/i\\source \"drivers/kernelsu/Kconfig\"" "$DRIVER_KCONFIG"
+
+          echo "[+] KernelSU setup done."
+          cd $GITHUB_WORKSPACE/KernelSU
+          export VERSION=$(($(git rev-list --count HEAD) + 10200))
+          echo "KernelSU VERSION: $VERSION"
+          echo "kernelsu_version=$VERSION" >> $GITHUB_ENV
+
+      - name: Symbol magic
+        run: |
+          echo "[+] Export all symbols from abi_gki_aarch64.xml"
+          COMMON_ROOT=$GITHUB_WORKSPACE/android-kernel/common
+          KSU_ROOT=$GITHUB_WORKSPACE/KernelSU
+          ABI_XML=$COMMON_ROOT/android/abi_gki_aarch64.xml
+          SYMBOL_LIST=$COMMON_ROOT/android/abi_gki_aarch64
+          if [ -f $SYMBOL_LIST ] && [ -f $ABI_XML ]; then
+            echo "[+] Add KernelSU symbols"
+            cat $KSU_ROOT/kernel/export_symbol.txt | awk '{sub("[ \t]+","");print "  "$0}' >> $SYMBOL_LIST
+          else
+            echo "[+] No symbol list found, skip"
+          fi
+
+      - name: Build Kernel and Virtual Device Modules
+        working-directory: android-kernel
+        run: |
+          if [ ! -z ${{ vars.EXPECTED_SIZE }} ] && [ ! -z ${{ vars.EXPECTED_HASH }} ]; then
+            export KSU_EXPECTED_SIZE=${{ vars.EXPECTED_SIZE }}
+            export KSU_EXPECTED_HASH=${{ vars.EXPECTED_HASH }}
+          fi
+
+          # Determine the correct Bazel target based on architecture
+          if [ "${{ github.event.inputs.arch }}" == "arm64-v8a" ]; then
+            BAZEL_TARGET="//common-modules/virtual-device:virtual_device_aarch64_dist"
+          else
+            BAZEL_TARGET="//common-modules/virtual-device:virtual_device_x86_64_dist"
+          fi
+
+          echo "[+] Building with Bazel target: $BAZEL_TARGET"
+          tools/bazel run --config=fast --config=stamp --lto=thin $BAZEL_TARGET -- --dist_dir=dist
+
+      - name: Prepare artifacts
+        id: prepareArtifacts
+        run: |
+          OUTDIR=android-kernel/dist
+          mkdir -p output
+
+          if [ "${{ github.event.inputs.arch }}" == "arm64-v8a" ]; then
+            KERNEL_IMAGE=Image
+            ARCH_NAME=aarch64
+          else
+            KERNEL_IMAGE=bzImage
+            ARCH_NAME=x86_64
+          fi
+
+          # Copy kernel
+          if [ -f "$OUTDIR/$KERNEL_IMAGE" ]; then
+            cp "$OUTDIR/$KERNEL_IMAGE" ./output/kernel-avd-android15-$ARCH_NAME
+            echo "Kernel copied: kernel-avd-android15-$ARCH_NAME"
+          else
+            echo "ERROR: Kernel $KERNEL_IMAGE not found in $OUTDIR"
+            ls -la "$OUTDIR"
+            exit 1
+          fi
+
+          # Copy kernel modules (*.ko files)
+          if ls "$OUTDIR"/*.ko 1> /dev/null 2>&1; then
+            cp "$OUTDIR"/*.ko ./output/
+            echo "Kernel modules copied"
+            ls -la ./output/*.ko
+          else
+            echo "WARNING: No kernel modules found"
+          fi
+
+          echo "arch_name=$ARCH_NAME" >> $GITHUB_OUTPUT
+
+      - name: Upload Kernel and Modules
+        uses: actions/upload-artifact@v5
+        with:
+          name: kernel-avd-android15-${{ steps.prepareArtifacts.outputs.arch_name }}-${{ env.kernelsu_version }}
+          path: ./output/*
+
+      - name: Build Summary
+        run: |
+          echo "## Build Complete! :rocket:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Architecture:** ${{ github.event.inputs.arch }}" >> $GITHUB_STEP_SUMMARY
+          echo "**KernelSU Version:** ${{ env.kernelsu_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Files Built:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          ls -lh ./output/ >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Usage:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "# Download artifacts, then launch emulator:" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event.inputs.arch }}" == "arm64-v8a" ]; then
+            echo "emulator -avd YOUR_AVD -kernel kernel-avd-android15-aarch64 -writable-system" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "emulator -avd YOUR_AVD -kernel kernel-avd-android15-x86_64 -writable-system" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo '```' >> $GITHUB_STEP_SUMMARY

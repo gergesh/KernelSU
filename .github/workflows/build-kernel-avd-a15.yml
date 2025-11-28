@@ -90,7 +90,7 @@ jobs:
             echo "[+] No symbol list found, skip"
           fi
 
-      - name: Build Kernel and Virtual Device Modules
+      - name: Build Kernel with Built-in Virtual Device Drivers
         working-directory: android-kernel
         run: |
           if [ ! -z ${{ vars.EXPECTED_SIZE }} ] && [ ! -z ${{ vars.EXPECTED_HASH }} ]; then
@@ -98,14 +98,21 @@ jobs:
             export KSU_EXPECTED_HASH=${{ vars.EXPECTED_HASH }}
           fi
 
-          # Determine the correct Bazel target based on architecture
+          # Build kernel with virtual device drivers built-in (not as modules)
+          # This ensures virtio drivers are available at boot time for the emulator
           if [ "${{ github.event.inputs.arch }}" == "arm64-v8a" ]; then
-            BAZEL_TARGET="//common-modules/virtual-device:virtual_device_aarch64_dist"
+            ARCH=arm64
+            BAZEL_TARGET="//common:kernel_aarch64_dist"
           else
-            BAZEL_TARGET="//common-modules/virtual-device:virtual_device_x86_64_dist"
+            ARCH=x86_64
+            BAZEL_TARGET="//common:kernel_x86_64_dist"
           fi
 
-          echo "[+] Building with Bazel target: $BAZEL_TARGET"
+          echo "[+] Building kernel with built-in virtual device drivers"
+          echo "[+] Bazel target: $BAZEL_TARGET"
+
+          # Build with virtual device config to enable virtio drivers as built-in
+          export BUILD_CONFIG=common-modules/virtual-device/build.config.virtual_device.${ARCH}
           tools/bazel run --config=fast --config=stamp --lto=thin $BAZEL_TARGET -- --dist_dir=dist
 
       - name: Prepare artifacts
@@ -122,23 +129,15 @@ jobs:
             ARCH_NAME=x86_64
           fi
 
-          # Copy kernel
+          # Copy kernel (with built-in virtual device drivers)
           if [ -f "$OUTDIR/$KERNEL_IMAGE" ]; then
             cp "$OUTDIR/$KERNEL_IMAGE" ./output/kernel-avd-android15-$ARCH_NAME
-            echo "Kernel copied: kernel-avd-android15-$ARCH_NAME"
+            echo "Kernel with built-in drivers copied: kernel-avd-android15-$ARCH_NAME"
+            echo "Kernel size: $(du -h ./output/kernel-avd-android15-$ARCH_NAME | cut -f1)"
           else
             echo "ERROR: Kernel $KERNEL_IMAGE not found in $OUTDIR"
             ls -la "$OUTDIR"
             exit 1
-          fi
-
-          # Copy kernel modules (*.ko files)
-          if ls "$OUTDIR"/*.ko 1> /dev/null 2>&1; then
-            cp "$OUTDIR"/*.ko ./output/
-            echo "Kernel modules copied"
-            ls -la ./output/*.ko
-          else
-            echo "WARNING: No kernel modules found"
           fi
 
           echo "arch_name=$ARCH_NAME" >> $GITHUB_OUTPUT

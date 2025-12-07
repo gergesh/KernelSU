@@ -128,16 +128,39 @@ jobs:
             ARCH_NAME=x86_64
           fi
 
-          # Copy kernel (with built-in virtual device drivers)
+          # Copy kernel
           if [ -f "$OUTDIR/$KERNEL_IMAGE" ]; then
             cp "$OUTDIR/$KERNEL_IMAGE" ./output/kernel-avd-android15-$ARCH_NAME
-            echo "Kernel with built-in drivers copied: kernel-avd-android15-$ARCH_NAME"
+            echo "Kernel copied: kernel-avd-android15-$ARCH_NAME"
             echo "Kernel size: $(du -h ./output/kernel-avd-android15-$ARCH_NAME | cut -f1)"
           else
             echo "ERROR: Kernel $KERNEL_IMAGE not found in $OUTDIR"
             ls -la "$OUTDIR"
             exit 1
           fi
+
+          # Copy initramfs.img (contains compatible virtio modules for boot)
+          if [ -f "$OUTDIR/initramfs.img" ]; then
+            cp "$OUTDIR/initramfs.img" ./output/initramfs.img
+            echo "initramfs.img copied"
+            echo "initramfs size: $(du -h ./output/initramfs.img | cut -f1)"
+          else
+            echo "WARNING: initramfs.img not found in $OUTDIR"
+          fi
+
+          # Copy all kernel modules (.ko files) for completeness
+          mkdir -p ./output/modules
+          if ls $OUTDIR/*.ko 1> /dev/null 2>&1; then
+            cp $OUTDIR/*.ko ./output/modules/
+            echo "Kernel modules copied:"
+            ls -lh ./output/modules/
+          else
+            echo "No standalone .ko files found in dist"
+          fi
+
+          # List all dist contents for debugging
+          echo "=== Full dist directory contents ==="
+          ls -la "$OUTDIR"
 
           echo "arch_name=$ARCH_NAME" >> $GITHUB_OUTPUT
 
@@ -161,10 +184,10 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Usage:" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "# Download artifacts, then launch emulator:" >> $GITHUB_STEP_SUMMARY
+          echo "# Download and extract artifacts, then launch emulator:" >> $GITHUB_STEP_SUMMARY
           if [ "${{ github.event.inputs.arch }}" == "arm64-v8a" ]; then
-            echo "emulator -avd YOUR_AVD -kernel kernel-avd-android15-aarch64 -writable-system" >> $GITHUB_STEP_SUMMARY
+            echo "emulator -avd YOUR_AVD -kernel kernel-avd-android15-aarch64 -ramdisk initramfs.img -no-snapshot-load" >> $GITHUB_STEP_SUMMARY
           else
-            echo "emulator -avd YOUR_AVD -kernel kernel-avd-android15-x86_64 -writable-system" >> $GITHUB_STEP_SUMMARY
+            echo "emulator -avd YOUR_AVD -kernel kernel-avd-android15-x86_64 -ramdisk initramfs.img -no-snapshot-load" >> $GITHUB_STEP_SUMMARY
           fi
           echo '```' >> $GITHUB_STEP_SUMMARY

@@ -98,21 +98,20 @@ jobs:
             export KSU_EXPECTED_HASH=${{ vars.EXPECTED_HASH }}
           fi
 
-          # Build kernel with virtual device drivers built-in (not as modules)
-          # This ensures virtio drivers are available at boot time for the emulator
+          # Build kernel with virtual device modules using the correct target
+          # This builds both the kernel AND compatible modules for AVD
           if [ "${{ github.event.inputs.arch }}" == "arm64-v8a" ]; then
             ARCH=arm64
-            BAZEL_TARGET="//common:kernel_aarch64_dist"
+            BAZEL_TARGET="//common-modules/virtual-device:virtual_device_aarch64_dist"
           else
             ARCH=x86_64
-            BAZEL_TARGET="//common:kernel_x86_64_dist"
+            BAZEL_TARGET="//common-modules/virtual-device:virtual_device_x86_64_dist"
           fi
 
-          echo "[+] Building kernel with built-in virtual device drivers"
+          echo "[+] Building kernel with virtual device modules"
           echo "[+] Bazel target: $BAZEL_TARGET"
 
-          # Build with virtual device config to enable virtio drivers as built-in
-          export BUILD_CONFIG=common-modules/virtual-device/build.config.virtual_device.${ARCH}
+          # Build using the virtual_device target which produces kernel + compatible modules
           tools/bazel run --config=fast --config=stamp --lto=thin $BAZEL_TARGET -- --dist_dir=dist
 
       - name: Prepare artifacts

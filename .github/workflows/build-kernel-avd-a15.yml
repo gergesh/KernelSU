@@ -61,8 +61,18 @@ jobs:
           echo "[+] KernelSU setup"
           GKI_ROOT=$(pwd)
           echo "[+] GKI_ROOT: $GKI_ROOT"
-          echo "[+] Copy KernelSU driver to $GKI_ROOT/common/drivers"
-          ln -sf $GITHUB_WORKSPACE/KernelSU/kernel $GKI_ROOT/common/drivers/kernelsu
+
+          # Copy KernelSU as a proper directory (not symlink) to preserve git context
+          # This is needed for proper version detection and submodule-like integration
+          echo "[+] Copy KernelSU to $GKI_ROOT/common/drivers/kernelsu"
+          cp -r $GITHUB_WORKSPACE/KernelSU/kernel $GKI_ROOT/common/drivers/kernelsu
+
+          # Create .git file pointing to parent repo (mimics git submodule structure)
+          # This allows Kbuild to detect version from git history
+          echo "gitdir: $GITHUB_WORKSPACE/KernelSU/.git/modules/kernel" > $GKI_ROOT/common/drivers/kernelsu/.git 2>/dev/null || true
+          # Fallback: copy the actual .git directory reference
+          mkdir -p $GKI_ROOT/common/drivers/kernelsu/../.git_ksu
+          cp -r $GITHUB_WORKSPACE/KernelSU/.git $GKI_ROOT/common/drivers/kernelsu/../.git_ksu/ 2>/dev/null || true
 
           echo "[+] Add KernelSU driver to Makefile"
           DRIVER_MAKEFILE=$GKI_ROOT/common/drivers/Makefile
@@ -78,11 +88,11 @@ jobs:
           echo "KernelSU VERSION: $VERSION (git commits: $KSU_GIT_VERSION)"
           echo "kernelsu_version=$VERSION" >> $GITHUB_ENV
 
-          # Write version directly to Kbuild to avoid git detection issues during bazel build
-          # This ensures the version is set even when symlinks don't preserve git context
-          echo "" >> $GITHUB_WORKSPACE/KernelSU/kernel/Kbuild
-          echo "# Version set by GitHub Actions build" >> $GITHUB_WORKSPACE/KernelSU/kernel/Kbuild
-          echo "ccflags-y += -DKSU_VERSION=$VERSION" >> $GITHUB_WORKSPACE/KernelSU/kernel/Kbuild
+          # Write version directly to Kbuild to ensure correct version even in sandboxed builds
+          # This is a belt-and-suspenders approach alongside the .git setup above
+          echo "" >> $GKI_ROOT/common/drivers/kernelsu/Kbuild
+          echo "# Version set by GitHub Actions build" >> $GKI_ROOT/common/drivers/kernelsu/Kbuild
+          echo "ccflags-y += -DKSU_VERSION=$VERSION" >> $GKI_ROOT/common/drivers/kernelsu/Kbuild
           echo "[+] Wrote KSU_VERSION=$VERSION to Kbuild"
 
       - name: Symbol magic

@@ -72,9 +72,18 @@ jobs:
 
           echo "[+] KernelSU setup done."
           cd $GITHUB_WORKSPACE/KernelSU
-          export VERSION=$(($(git rev-list --count HEAD) + 10200))
-          echo "KernelSU VERSION: $VERSION"
+          KSU_GIT_VERSION=$(git rev-list --count HEAD)
+          # Version formula: 30000 + git_commit_count (matching Kbuild logic)
+          export VERSION=$((30000 + $KSU_GIT_VERSION))
+          echo "KernelSU VERSION: $VERSION (git commits: $KSU_GIT_VERSION)"
           echo "kernelsu_version=$VERSION" >> $GITHUB_ENV
+
+          # Write version directly to Kbuild to avoid git detection issues during bazel build
+          # This ensures the version is set even when symlinks don't preserve git context
+          echo "" >> $GITHUB_WORKSPACE/KernelSU/kernel/Kbuild
+          echo "# Version set by GitHub Actions build" >> $GITHUB_WORKSPACE/KernelSU/kernel/Kbuild
+          echo "ccflags-y += -DKSU_VERSION=$VERSION" >> $GITHUB_WORKSPACE/KernelSU/kernel/Kbuild
+          echo "[+] Wrote KSU_VERSION=$VERSION to Kbuild"
 
       - name: Symbol magic
         run: |

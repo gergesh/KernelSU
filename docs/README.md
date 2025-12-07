@@ -30,6 +30,7 @@ Currently, only the `arm64-v8a` and `x86_64` architectures are supported.
 
 - [Installation](https://kernelsu.org/guide/installation.html)
 - [How to build](https://kernelsu.org/guide/how-to-build.html)
+- [Emulator Guide](emulator-guide.md) - Run KernelSU on Android Emulator (AVD)
 - [Official website](https://kernelsu.org/)
 
 ## Translation

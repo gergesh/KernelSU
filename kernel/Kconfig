@@ -17,4 +17,13 @@ config KSU_DEBUG
 	help
 	  Enable KernelSU debug mode.
 
+config KSU_AUTO_SHELL_ROOT
+	bool "Auto-grant root to adb shell"
+	depends on KSU
+	default n
+	help
+	  Automatically grant root access to adb shell (uid 2000) at boot.
+	  Useful for emulator testing without needing to manually approve
+	  shell in KernelSU Manager. Does not enable other debug features.
+
 endmenu

@@ -107,7 +107,7 @@ void ksu_show_allow_list(void)
     }
 }
 
-#ifdef CONFIG_KSU_DEBUG
+#if defined(CONFIG_KSU_DEBUG) || defined(CONFIG_KSU_AUTO_SHELL_ROOT)
 static void ksu_grant_root_to_shell()
 {
     struct app_profile profile = {
@@ -436,7 +436,7 @@ void ksu_load_allow_list()
     u32 magic;
     u32 version;
 
-#ifdef CONFIG_KSU_DEBUG
+#if defined(CONFIG_KSU_DEBUG) || defined(CONFIG_KSU_AUTO_SHELL_ROOT)
     // always allow adb shell by default
     ksu_grant_root_to_shell();
 #endif

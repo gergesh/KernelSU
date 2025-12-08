@@ -73,8 +73,9 @@ jobs:
           echo "[+] Enable auto shell root (without full debug mode)"
           # Add CONFIG_KSU_AUTO_SHELL_ROOT=y to auto-grant root to adb shell
           # This doesn't expose the module in sysfs like CONFIG_KSU_DEBUG would
-          echo "CONFIG_KSU_AUTO_SHELL_ROOT=y" >> $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_AUTO_SHELL_ROOT=y" >> $GKI_ROOT/common/arch/x86/configs/gki_defconfig 2>/dev/null || true
+          # Must insert in sorted position for bazel defconfig validation
+          sed -i '/CONFIG_INTERCONNECT=y/a CONFIG_KSU_AUTO_SHELL_ROOT=y' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
+          sed -i '/CONFIG_INTERCONNECT=y/a CONFIG_KSU_AUTO_SHELL_ROOT=y' $GKI_ROOT/common/arch/x86/configs/gki_defconfig 2>/dev/null || true
 
           echo "[+] KernelSU setup done."
           cd $GITHUB_WORKSPACE/KernelSU

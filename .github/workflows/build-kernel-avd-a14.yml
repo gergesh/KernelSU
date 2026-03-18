@@ -74,6 +74,12 @@ jobs:
           # This doesn't expose the module in sysfs like CONFIG_KSU_DEBUG would
           # Must insert in sorted position for bazel defconfig validation
 
+          # Disable vsock - causes vqParseGuestToHostRequestLocked spam on emulator
+          # ksud falls back to Unix sockets when vsock is unavailable
+          sed -i '/CONFIG_VSOCKETS/d' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
+          sed -i '/CONFIG_VIRTIO_VSOCKETS/d' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
+          sed -i '/CONFIG_VIRTIO_VSOCKETS_COMMON/d' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
+
           echo "[+] KernelSU setup done."
           cd $GITHUB_WORKSPACE/KernelSU
           KSU_GIT_VERSION=$(git rev-list --count HEAD)

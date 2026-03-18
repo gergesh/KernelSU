@@ -1,0 +1,4 @@
+# After the KSU defconfig insertion, also disable vsock
+sed -i '/CONFIG_VSOCKETS/d' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
+sed -i '/CONFIG_VIRTIO_VSOCKETS/d' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
+echo '# CONFIG_VSOCKETS is not set' >> $GKI_ROOT/common/arch/arm64/configs/gki_defconfig

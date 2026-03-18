@@ -1,0 +1,209 @@
+name: Build Kernel - Android 14 AVD (Emulator)
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: 'Architecture'
+        required: true
+        type: choice
+        options:
+          - arm64-v8a
+          - x86_64
+        default: 'arm64-v8a'
+
+jobs:
+  build:
+    name: Build Android 14 AVD Kernel (${{ github.event.inputs.arch }})
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 2048
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+
+      - name: Checkout KernelSU
+        uses: actions/checkout@v5
+        with:
+          path: KernelSU
+          fetch-depth: 0
+
+      - name: Setup kernel source
+        run: |
+          echo "Free space:"
+          df -h
+          cd $GITHUB_WORKSPACE
+          sudo apt-get install repo -y
+          mkdir android-kernel && cd android-kernel
+
+          # Use the manifest for Android 14 AVD
+          if [ "${{ github.event.inputs.arch }}" == "arm64-v8a" ]; then
+            MANIFEST_FILE=$GITHUB_WORKSPACE/KernelSU/.github/manifests/android-14-avd_aarch64.xml
+          else
+            MANIFEST_FILE=$GITHUB_WORKSPACE/KernelSU/.github/manifests/android-14-avd_x86_64.xml
+          fi
+
+          repo init --depth=1 -u https://android.googlesource.com/kernel/manifest --repo-rev=v2.16
+          cp $MANIFEST_FILE .repo/manifests/default.xml
+
+          repo --version
+          repo --trace sync -c -j$(nproc --all) --no-tags
+          df -h
+
+      - name: Setup KernelSU
+        run: |
+          cd $GITHUB_WORKSPACE/android-kernel
+          echo "[+] KernelSU setup"
+          GKI_ROOT=$(pwd)
+          echo "[+] GKI_ROOT: $GKI_ROOT"
+          echo "[+] Copy KernelSU driver to $GKI_ROOT/common/drivers"
+          ln -sf $GITHUB_WORKSPACE/KernelSU/kernel $GKI_ROOT/common/drivers/kernelsu
+
+          echo "[+] Add KernelSU driver to Makefile"
+          DRIVER_MAKEFILE=$GKI_ROOT/common/drivers/Makefile
+          DRIVER_KCONFIG=$GKI_ROOT/common/drivers/Kconfig
+          grep -q "kernelsu" "$DRIVER_MAKEFILE" || printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> "$DRIVER_MAKEFILE"
+          grep -q "kernelsu" "$DRIVER_KCONFIG" || sed -i "/endmenu/i\\source \"drivers/kernelsu/Kconfig\"" "$DRIVER_KCONFIG"
+
+          echo "[+] Enable auto shell root (without full debug mode)"
+          # Add CONFIG_KSU_AUTO_SHELL_ROOT=y to auto-grant root to adb shell
+          # This doesn't expose the module in sysfs like CONFIG_KSU_DEBUG would
+          # Must insert in sorted position for bazel defconfig validation
+          sed -i '/CONFIG_INTERCONNECT=y/a CONFIG_KSU_AUTO_SHELL_ROOT=y' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
+          sed -i '/CONFIG_INTERCONNECT=y/a CONFIG_KSU_AUTO_SHELL_ROOT=y' $GKI_ROOT/common/arch/x86/configs/gki_defconfig 2>/dev/null || true
+
+          echo "[+] KernelSU setup done."
+          cd $GITHUB_WORKSPACE/KernelSU
+          KSU_GIT_VERSION=$(git rev-list --count HEAD)
+          # Version formula: 30000 + git_commit_count (matching Kbuild logic)
+          export VERSION=$((30000 + $KSU_GIT_VERSION))
+          echo "KernelSU VERSION: $VERSION (git commits: $KSU_GIT_VERSION)"
+          echo "kernelsu_version=$VERSION" >> $GITHUB_ENV
+
+          # Write version directly to Kbuild to avoid git detection issues during bazel build
+          # This ensures the version is set even when symlinks don't preserve git context
+          echo "" >> $GITHUB_WORKSPACE/KernelSU/kernel/Kbuild
+          echo "# Version set by GitHub Actions build" >> $GITHUB_WORKSPACE/KernelSU/kernel/Kbuild
+          echo "ccflags-y += -DKSU_VERSION=$VERSION" >> $GITHUB_WORKSPACE/KernelSU/kernel/Kbuild
+          echo "[+] Wrote KSU_VERSION=$VERSION to Kbuild"
+
+      - name: Symbol magic
+        run: |
+          echo "[+] Export all symbols from abi_gki_aarch64.xml"
+          COMMON_ROOT=$GITHUB_WORKSPACE/android-kernel/common
+          KSU_ROOT=$GITHUB_WORKSPACE/KernelSU
+          ABI_XML=$COMMON_ROOT/android/abi_gki_aarch64.xml
+          SYMBOL_LIST=$COMMON_ROOT/android/abi_gki_aarch64
+          if [ -f $SYMBOL_LIST ] && [ -f $ABI_XML ]; then
+            echo "[+] Add KernelSU symbols"
+            cat $KSU_ROOT/kernel/export_symbol.txt | awk '{sub("[ \t]+","");print "  "$0}' >> $SYMBOL_LIST
+          else
+            echo "[+] No symbol list found, skip"
+          fi
+
+      - name: Build Kernel with Built-in Virtual Device Drivers
+        working-directory: android-kernel
+        run: |
+          if [ ! -z ${{ vars.EXPECTED_SIZE }} ] && [ ! -z ${{ vars.EXPECTED_HASH }} ]; then
+            export KSU_EXPECTED_SIZE=${{ vars.EXPECTED_SIZE }}
+            export KSU_EXPECTED_HASH=${{ vars.EXPECTED_HASH }}
+          fi
+
+          # Build kernel with virtual device modules using the correct target
+          # This builds both the kernel AND compatible modules for AVD
+          if [ "${{ github.event.inputs.arch }}" == "arm64-v8a" ]; then
+            ARCH=arm64
+            BAZEL_TARGET="//common-modules/virtual-device:virtual_device_aarch64_dist"
+          else
+            ARCH=x86_64
+            BAZEL_TARGET="//common-modules/virtual-device:virtual_device_x86_64_dist"
+          fi
+
+          echo "[+] Building kernel with virtual device modules"
+          echo "[+] Bazel target: $BAZEL_TARGET"
+
+          # Build using the virtual_device target which produces kernel + compatible modules
+          tools/bazel run --config=fast --config=stamp --lto=thin $BAZEL_TARGET -- --dist_dir=dist
+
+      - name: Prepare artifacts
+        id: prepareArtifacts
+        run: |
+          OUTDIR=android-kernel/dist
+          mkdir -p output
+
+          if [ "${{ github.event.inputs.arch }}" == "arm64-v8a" ]; then
+            KERNEL_IMAGE=Image
+            ARCH_NAME=aarch64
+          else
+            KERNEL_IMAGE=bzImage
+            ARCH_NAME=x86_64
+          fi
+
+          # Copy kernel
+          if [ -f "$OUTDIR/$KERNEL_IMAGE" ]; then
+            cp "$OUTDIR/$KERNEL_IMAGE" ./output/kernel-avd-android14-$ARCH_NAME
+            echo "Kernel copied: kernel-avd-android14-$ARCH_NAME"
+            echo "Kernel size: $(du -h ./output/kernel-avd-android14-$ARCH_NAME | cut -f1)"
+          else
+            echo "ERROR: Kernel $KERNEL_IMAGE not found in $OUTDIR"
+            ls -la "$OUTDIR"
+            exit 1
+          fi
+
+          # Copy initramfs.img (contains compatible virtio modules for boot)
+          if [ -f "$OUTDIR/initramfs.img" ]; then
+            cp "$OUTDIR/initramfs.img" ./output/initramfs.img
+            echo "initramfs.img copied"
+            echo "initramfs size: $(du -h ./output/initramfs.img | cut -f1)"
+          else
+            echo "WARNING: initramfs.img not found in $OUTDIR"
+          fi
+
+          # Copy all kernel modules (.ko files) for completeness
+          mkdir -p ./output/modules
+          if ls $OUTDIR/*.ko 1> /dev/null 2>&1; then
+            cp $OUTDIR/*.ko ./output/modules/
+            echo "Kernel modules copied:"
+            ls -lh ./output/modules/
+          else
+            echo "No standalone .ko files found in dist"
+          fi
+
+          # List all dist contents for debugging
+          echo "=== Full dist directory contents ==="
+          ls -la "$OUTDIR"
+
+          echo "arch_name=$ARCH_NAME" >> $GITHUB_OUTPUT
+
+      - name: Upload Kernel and Modules
+        uses: actions/upload-artifact@v5
+        with:
+          name: kernel-avd-android14-${{ steps.prepareArtifacts.outputs.arch_name }}-${{ env.kernelsu_version }}
+          path: ./output/*
+
+      - name: Build Summary
+        run: |
+          echo "## Build Complete! :rocket:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Architecture:** ${{ github.event.inputs.arch }}" >> $GITHUB_STEP_SUMMARY
+          echo "**KernelSU Version:** ${{ env.kernelsu_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Files Built:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          ls -lh ./output/ >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Usage:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "# Download and extract artifacts, then launch emulator:" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event.inputs.arch }}" == "arm64-v8a" ]; then
+            echo "emulator -avd YOUR_AVD -kernel kernel-avd-android14-aarch64 -ramdisk initramfs.img -no-snapshot-load" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "emulator -avd YOUR_AVD -kernel kernel-avd-android14-x86_64 -ramdisk initramfs.img -no-snapshot-load" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo '```' >> $GITHUB_STEP_SUMMARY

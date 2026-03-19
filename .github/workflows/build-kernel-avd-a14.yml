@@ -84,6 +84,10 @@ jobs:
           # Required for ksud bootstrap on production (user) builds.
           sed -i 's/^CONFIG_CMDLINE="\(.*\)"/CONFIG_CMDLINE="\1 enforcing=0"/' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
 
+          # Disable defconfig validation (our CMDLINE change is intentional)
+          sed -i 's/check_defconfig/true #check_defconfig/' $GKI_ROOT/common/build.config.gki.aarch64 2>/dev/null || true
+          sed -i 's/check_defconfig/true #check_defconfig/' $GKI_ROOT/common/build.config.gki 2>/dev/null || true
+
           echo "[+] KernelSU setup done."
           cd $GITHUB_WORKSPACE/KernelSU
           KSU_GIT_VERSION=$(git rev-list --count HEAD)

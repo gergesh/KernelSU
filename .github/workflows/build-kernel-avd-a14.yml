@@ -80,6 +80,10 @@ jobs:
           sed -i '/CONFIG_VIRTIO_VSOCKETS/d' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
           sed -i '/CONFIG_VIRTIO_VSOCKETS_COMMON/d' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
 
+          # Enable SELinux permissive mode at boot - required for ksud bootstrap
+          # on production (user) builds like google_apis_playstore images
+          echo "CONFIG_SECURITY_SELINUX_DEVELOP=y" >> $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
+
           echo "[+] KernelSU setup done."
           cd $GITHUB_WORKSPACE/KernelSU
           KSU_GIT_VERSION=$(git rev-list --count HEAD)

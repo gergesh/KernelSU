@@ -37,7 +37,7 @@ static const char KERNEL_SU_RC[] =
     "on post-fs-data\n"
     "    start logd\n"
     // Auto-install: run install from a separate copy to avoid ETXTBSY
-    "    exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH ".installer install\n"
+    "    exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH "i install\n"
     // We should wait for the post-fs-data finish
     "    exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " post-fs-data\n"
     "\n"

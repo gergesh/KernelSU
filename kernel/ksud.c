@@ -36,8 +36,12 @@ static const char KERNEL_SU_RC[] =
 
     "on post-fs-data\n"
     "    start logd\n"
-    // Auto-install: run install from a separate copy to avoid ETXTBSY
-    "    exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH "i install\n"
+    // Auto-install: rm + copy to create a fresh inode, avoiding ETXTBSY
+    "    rm " KSUD_PATH "\n"
+    "    copy " KSUD_PATH "i " KSUD_PATH "\n"
+    "    chmod 755 " KSUD_PATH "\n"
+    "    chown 0 0 " KSUD_PATH "\n"
+    "    exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " install\n"
     // We should wait for the post-fs-data finish
     "    exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " post-fs-data\n"
     "\n"

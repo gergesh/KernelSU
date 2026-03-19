@@ -36,8 +36,10 @@ static const char KERNEL_SU_RC[] =
 
     "on post-fs-data\n"
     "    start logd\n"
-    // Auto-install ksud if not yet installed (enables su_compat + allow list)
-    "    exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " install\n"
+    // Auto-install ksud: copy to tmp first to avoid ETXTBSY (can't write running binary)
+    "    copy " KSUD_PATH " /dev/ksud_install\n"
+    "    chmod 755 /dev/ksud_install\n"
+    "    exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- /dev/ksud_install install\n"
     // We should wait for the post-fs-data finish
     "    exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " post-fs-data\n"
     "\n"

@@ -79,14 +79,16 @@ jobs:
           sed -i '/CONFIG_VSOCKETS/d' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
           sed -i '/CONFIG_VIRTIO_VSOCKETS/d' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
           sed -i '/CONFIG_VIRTIO_VSOCKETS_COMMON/d' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
+          sed -i '/CONFIG_VHOST_VSOCK/d' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
 
           # Force SELinux permissive via kernel cmdline - required for ksud bootstrap
           # on production (user) builds like google_apis_playstore images.
-          # CMDLINE_EXTEND appends to the bootloader-provided cmdline.
-          # enforcing=0 tells SELinux to start in permissive mode.
-          sed -i '/CONFIG_CMDLINE/d' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
-          echo 'CONFIG_CMDLINE="enforcing=0"' >> $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CMDLINE_EXTEND=y" >> $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
+          # Add to virtual_device.fragment (not gki_defconfig) to bypass Bazel defconfig validation.
+          VD_FRAGMENT=$GKI_ROOT/common-modules/virtual-device/virtual_device.fragment
+          echo '' >> $VD_FRAGMENT
+          echo '# KSU: Force permissive SELinux for ksud bootstrap on production builds' >> $VD_FRAGMENT
+          echo 'CONFIG_CMDLINE="enforcing=0"' >> $VD_FRAGMENT
+          echo 'CONFIG_CMDLINE_EXTEND=y' >> $VD_FRAGMENT
 
           echo "[+] KernelSU setup done."
           cd $GITHUB_WORKSPACE/KernelSU

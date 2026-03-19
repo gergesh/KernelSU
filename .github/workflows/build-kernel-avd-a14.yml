@@ -74,12 +74,6 @@ jobs:
           # This doesn't expose the module in sysfs like CONFIG_KSU_DEBUG would
           # Must insert in sorted position for bazel defconfig validation
 
-          # Disable vsock - causes vqParseGuestToHostRequestLocked spam on emulator
-          # ksud falls back to Unix sockets when vsock is unavailable
-          sed -i '/CONFIG_VSOCKETS/d' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
-          sed -i '/CONFIG_VIRTIO_VSOCKETS/d' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
-          sed -i '/CONFIG_VIRTIO_VSOCKETS_COMMON/d' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
-
           # Force SELinux permissive: append enforcing=0 to existing kernel cmdline.
           # Required for ksud bootstrap on production (user) builds.
           sed -i 's/^CONFIG_CMDLINE="\(.*\)"/CONFIG_CMDLINE="\1 enforcing=0"/' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig

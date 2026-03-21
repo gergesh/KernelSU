@@ -17,6 +17,7 @@
 #include "sucompat.h"
 #include "setuid_hook.h"
 #include "selinux/selinux.h"
+#include "sysfs_hide.h"
 #include "util.h"
 #include "ksud.h"
 
@@ -239,6 +240,7 @@ static inline bool check_syscall_fastpath(int nr)
     case __NR_faccessat:
     case __NR_execve:
     case __NR_setresuid:
+    case __NR_getdents64:
         return true;
     default:
         return false;
@@ -326,6 +328,36 @@ static void ksu_sys_enter_handler(void *data, struct pt_regs *regs, long id)
             ksu_handle_setresuid(ruid, euid, suid);
             return;
         }
+
+        // Handle getdents64 - save args for sys_exit filtering
+        if (id == __NR_getdents64) {
+            unsigned int fd = (unsigned int)PT_REGS_PARM1(regs);
+            void __user *dirent = (void __user *)PT_REGS_PARM2(regs);
+            unsigned int count = (unsigned int)PT_REGS_PARM3(regs);
+            ksu_sysfs_hide_getdents64_enter(fd, dirent, count);
+            return;
+        }
+
+        // Handle openat - block access to emulator sysfs paths
+        // Note: we can't easily redirect the path at sys_enter since
+        // the replacement needs to be a __user pointer. Instead, the
+        // getdents64 filtering prevents directory enumeration, and
+        // newfstatat/faccessat checks below handle direct path access.
+    }
+}
+
+// sys_exit handler for filtering getdents64 results
+static void ksu_sys_exit_handler(void *data, struct pt_regs *regs, long ret)
+{
+    long id;
+
+    id = syscall_get_nr(current, regs);
+    if (id == __NR_getdents64 && ret > 0) {
+        long new_ret = ksu_sysfs_hide_getdents64_exit(ret);
+        if (new_ret != ret) {
+            // Update the return value in regs
+            regs->regs[0] = new_ret;
+        }
     }
 }
 #endif
@@ -355,6 +387,14 @@ void ksu_syscall_hook_manager_init(void)
     } else {
         pr_info("hook_manager: sys_enter tracepoint registered\n");
     }
+
+    ret = register_trace_sys_exit(ksu_sys_exit_handler, NULL);
+    if (ret) {
+        pr_err("hook_manager: failed to register sys_exit tracepoint: %d\n",
+               ret);
+    } else {
+        pr_info("hook_manager: sys_exit tracepoint registered (sysfs hide)\n");
+    }
 #endif
 
     ksu_setuid_hook_init();
@@ -365,9 +405,10 @@ void ksu_syscall_hook_manager_exit(void)
 {
     pr_info("hook_manager: ksu_hook_manager_exit called\n");
 #ifdef CONFIG_HAVE_SYSCALL_TRACEPOINTS
+    unregister_trace_sys_exit(ksu_sys_exit_handler, NULL);
     unregister_trace_sys_enter(ksu_sys_enter_handler, NULL);
     tracepoint_synchronize_unregister();
-    pr_info("hook_manager: sys_enter tracepoint unregistered\n");
+    pr_info("hook_manager: tracepoints unregistered\n");
 #endif
 
 #ifdef CONFIG_KRETPROBES

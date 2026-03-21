@@ -15,7 +15,7 @@
 #include <linux/uaccess.h>
 #include <linux/version.h>
 #include <linux/sched.h>
-#include <linux/fdtable.h>
+#include <linux/file.h>
 #include <asm/syscall.h>
 
 #include "klog.h"
@@ -61,18 +61,19 @@ struct ksu_dirent64 {
  */
 static bool is_sysfs_fd(unsigned int fd)
 {
-	struct fd f;
+	struct file *f;
 	bool result = false;
 
-	f = fdget(fd);
-	if (!f.file)
+	f = fget(fd);
+	if (!f)
 		return false;
 
-	if (f.file->f_path.mnt->mnt_sb->s_type->name &&
-	    strcmp(f.file->f_path.mnt->mnt_sb->s_type->name, "sysfs") == 0)
+	if (f->f_path.mnt->mnt_sb->s_type &&
+	    f->f_path.mnt->mnt_sb->s_type->name &&
+	    strcmp(f->f_path.mnt->mnt_sb->s_type->name, "sysfs") == 0)
 		result = true;
 
-	fdput(f);
+	fput(f);
 	return result;
 }
 

@@ -78,11 +78,23 @@ jobs:
           # Required for ksud bootstrap on production (user) builds.
           sed -i 's/^CONFIG_CMDLINE="\(.*\)"/CONFIG_CMDLINE="\1 enforcing=0 kernelsu.allow_shell=1"/' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
 
-          # Enable virtiofs built-in (required for emulator root fs mount on newer QEMU)
-          # The stock emulator kernel has CONFIG_VIRTIO_FS=y; without it the kernel
-          # can't mount the root filesystem and panics.
-          echo "CONFIG_VIRTIO_FS=y" >> $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_FUSE_FS=y" >> $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
+          # Build critical virtio drivers as built-in (=y) instead of modules (=m).
+          # The emulator's first-stage init needs these available BEFORE module loading
+          # to find the boot block device at the androidboot.boot_devices path.
+          # Without built-in VIRTIO_MMIO, the kernel can't find the super/metadata
+          # partitions and init hangs waiting for uevents.
+          for cfg in CONFIG_VIRTIO_MMIO CONFIG_VIRTIO_BLK CONFIG_VIRTIO_PCI \
+                     CONFIG_VIRTIO_PCI_MODERN_DEV CONFIG_VIRTIO_PCI_LEGACY_DEV \
+                     CONFIG_VIRTIO_FS CONFIG_FUSE_FS; do
+            # Change =m to =y, or add =y if not present
+            if grep -q "^${cfg}=" $GKI_ROOT/common/arch/arm64/configs/gki_defconfig; then
+              sed -i "s/^${cfg}=.*/${cfg}=y/" $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
+            elif grep -q "# ${cfg} is not set" $GKI_ROOT/common/arch/arm64/configs/gki_defconfig; then
+              sed -i "s/# ${cfg} is not set/${cfg}=y/" $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
+            else
+              echo "${cfg}=y" >> $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
+            fi
+          done
 
           # Disable defconfig validation (our config changes are intentional)
           sed -i 's/check_defconfig/true #check_defconfig/' $GKI_ROOT/common/build.config.gki.aarch64 2>/dev/null || true

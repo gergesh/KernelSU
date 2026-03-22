@@ -78,7 +78,13 @@ jobs:
           # Required for ksud bootstrap on production (user) builds.
           sed -i 's/^CONFIG_CMDLINE="\(.*\)"/CONFIG_CMDLINE="\1 enforcing=0 kernelsu.allow_shell=1"/' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
 
-          # Disable defconfig validation (our CMDLINE change is intentional)
+          # Enable virtiofs built-in (required for emulator root fs mount on newer QEMU)
+          # The stock emulator kernel has CONFIG_VIRTIO_FS=y; without it the kernel
+          # can't mount the root filesystem and panics.
+          echo "CONFIG_VIRTIO_FS=y" >> $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_FUSE_FS=y" >> $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
+
+          # Disable defconfig validation (our config changes are intentional)
           sed -i 's/check_defconfig/true #check_defconfig/' $GKI_ROOT/common/build.config.gki.aarch64 2>/dev/null || true
           sed -i 's/check_defconfig/true #check_defconfig/' $GKI_ROOT/common/build.config.gki 2>/dev/null || true
 

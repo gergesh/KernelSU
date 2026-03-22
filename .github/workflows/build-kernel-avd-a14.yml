@@ -83,8 +83,9 @@ jobs:
           # to find the boot block device at the androidboot.boot_devices path.
           # Without built-in VIRTIO_MMIO, the kernel can't find the super/metadata
           # partitions and init hangs waiting for uevents.
-          for cfg in CONFIG_VIRTIO_MMIO CONFIG_VIRTIO_BLK CONFIG_VIRTIO_PCI \
-                     CONFIG_VIRTIO_PCI_MODERN_DEV CONFIG_VIRTIO_PCI_LEGACY_DEV \
+          # Only MMIO + BLK as built-in. NOT PCI — PCI grabs devices first
+          # and creates /sys paths that don't match boot_devices=a003600.virtio_mmio.
+          for cfg in CONFIG_VIRTIO_MMIO CONFIG_VIRTIO_BLK \
                      CONFIG_VIRTIO_FS CONFIG_FUSE_FS; do
             # Change =m to =y, or add =y if not present
             if grep -q "^${cfg}=" $GKI_ROOT/common/arch/arm64/configs/gki_defconfig; then

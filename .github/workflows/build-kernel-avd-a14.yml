@@ -87,8 +87,11 @@ jobs:
           # partitions and init hangs waiting for uevents.
           # Only MMIO + BLK as built-in. NOT PCI — PCI grabs devices first
           # and creates /sys paths that don't match boot_devices=a003600.virtio_mmio.
+          # Also GOLDFISH_PIPE (adb transport) and GOLDFISH_ADDRESS_SPACE
           for cfg in CONFIG_VIRTIO_MMIO CONFIG_VIRTIO_BLK \
-                     CONFIG_VIRTIO_FS CONFIG_FUSE_FS; do
+                     CONFIG_VIRTIO_FS CONFIG_FUSE_FS \
+                     CONFIG_GOLDFISH_PIPE CONFIG_GOLDFISH_ADDRESS_SPACE \
+                     CONFIG_GOLDFISH CONFIG_VIRTIO_CONSOLE; do
             # Change =m to =y, or add =y if not present
             if grep -q "^${cfg}=" $GKI_ROOT/common/arch/arm64/configs/gki_defconfig; then
               sed -i "s/^${cfg}=.*/${cfg}=y/" $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
@@ -205,7 +208,7 @@ jobs:
               if [ -f "$ml" ]; then
                 echo "  Patching $ml"
                 # Remove lines containing modules that are built-in
-                for builtin_pattern in virtio_mmio virtio_blk; do
+                for builtin_pattern in virtio_mmio virtio_blk goldfish_pipe goldfish_address_space virtio_console; do
                   sed -i "/${builtin_pattern}/d" "$ml"
                 done
                 echo "  Remaining modules: $(wc -l < "$ml")"

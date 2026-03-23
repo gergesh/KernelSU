@@ -179,10 +179,40 @@ jobs:
             exit 1
           fi
 
-          # Copy initramfs.img (contains compatible virtio modules for boot)
+          # Copy and patch initramfs.img
+          # Remove built-in modules from modules.load so init doesn't fail
+          # trying to insmod them (EBUSY when already compiled in)
           if [ -f "$OUTDIR/initramfs.img" ]; then
-            cp "$OUTDIR/initramfs.img" ./output/initramfs.img
-            echo "initramfs.img copied"
+            echo "Patching initramfs to remove built-in modules from modules.load..."
+            INITRAMFS_TMP=$(mktemp -d)
+
+            # Get list of built-in modules
+            BUILTIN_MODS=""
+            if [ -f "$OUTDIR/modules.builtin" ]; then
+              BUILTIN_MODS="$OUTDIR/modules.builtin"
+            fi
+
+            # Extract initramfs (LZ4 compressed CPIO)
+            cd "$INITRAMFS_TMP"
+            lz4 -dc "$OUTDIR/initramfs.img" | cpio -id 2>/dev/null
+
+            # Patch modules.load: remove entries for built-in modules
+            for ml in lib/modules/*/modules.load; do
+              if [ -f "$ml" ]; then
+                echo "  Patching $ml"
+                # Remove lines containing modules that are built-in
+                for builtin_pattern in virtio_mmio virtio_blk; do
+                  sed -i "/${builtin_pattern}/d" "$ml"
+                done
+                echo "  Remaining modules: $(wc -l < "$ml")"
+              fi
+            done
+
+            # Repack initramfs
+            find . | cpio -H newc -o 2>/dev/null | lz4 -l -c > "$GITHUB_WORKSPACE/output/initramfs.img"
+            cd "$GITHUB_WORKSPACE"
+            rm -rf "$INITRAMFS_TMP"
+            echo "initramfs.img patched and copied"
             echo "initramfs size: $(du -h ./output/initramfs.img | cut -f1)"
           else
             echo "WARNING: initramfs.img not found in $OUTDIR"

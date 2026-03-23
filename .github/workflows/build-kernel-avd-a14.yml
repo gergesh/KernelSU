@@ -80,27 +80,10 @@ jobs:
           # SELinux can be set permissive post-boot via `su -c setenforce 0`.
           sed -i 's/^CONFIG_CMDLINE="\(.*\)"/CONFIG_CMDLINE="\1 kernelsu.allow_shell=1"/' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
 
-          # Build critical virtio drivers as built-in (=y) instead of modules (=m).
-          # The emulator's first-stage init needs these available BEFORE module loading
-          # to find the boot block device at the androidboot.boot_devices path.
-          # Without built-in VIRTIO_MMIO, the kernel can't find the super/metadata
-          # partitions and init hangs waiting for uevents.
-          # Only MMIO + BLK as built-in. NOT PCI — PCI grabs devices first
-          # and creates /sys paths that don't match boot_devices=a003600.virtio_mmio.
-          # Also GOLDFISH_PIPE (adb transport) and GOLDFISH_ADDRESS_SPACE
-          for cfg in CONFIG_VIRTIO_MMIO CONFIG_VIRTIO_BLK \
-                     CONFIG_VIRTIO_FS CONFIG_FUSE_FS \
-                     CONFIG_GOLDFISH_PIPE CONFIG_GOLDFISH_ADDRESS_SPACE \
-                     CONFIG_GOLDFISH CONFIG_VIRTIO_CONSOLE; do
-            # Change =m to =y, or add =y if not present
-            if grep -q "^${cfg}=" $GKI_ROOT/common/arch/arm64/configs/gki_defconfig; then
-              sed -i "s/^${cfg}=.*/${cfg}=y/" $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
-            elif grep -q "# ${cfg} is not set" $GKI_ROOT/common/arch/arm64/configs/gki_defconfig; then
-              sed -i "s/# ${cfg} is not set/${cfg}=y/" $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
-            else
-              echo "${cfg}=y" >> $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
-            fi
-          done
+          # Keep all drivers as modules (=m). Android init relies on uevent
+          # cold-boot replay to discover devices — built-in drivers fire uevents
+          # before init starts, causing partition discovery to fail.
+          # The combined ramdisk (stock + our initramfs) provides matching modules.
 
           # Disable defconfig validation (our config changes are intentional)
           sed -i 's/check_defconfig/true #check_defconfig/' $GKI_ROOT/common/build.config.gki.aarch64 2>/dev/null || true
@@ -184,42 +167,14 @@ jobs:
             exit 1
           fi
 
-          # Copy and patch initramfs.img
-          # Remove built-in modules from modules.load so init doesn't fail
-          # trying to insmod them (EBUSY when already compiled in)
-          if [ -f "$OUTDIR/initramfs.img" ]; then
-            echo "Patching initramfs to remove built-in modules from modules.load..."
-            INITRAMFS_TMP=$(mktemp -d)
-
-            # Get list of built-in modules
-            BUILTIN_MODS=""
-            if [ -f "$OUTDIR/modules.builtin" ]; then
-              BUILTIN_MODS="$OUTDIR/modules.builtin"
-            fi
-
-            # Extract initramfs (LZ4 compressed CPIO)
-            # Use readlink to resolve symlinks in dist/
-            INITRAMFS_PATH=$(readlink -f "$OUTDIR/initramfs.img")
-            cd "$INITRAMFS_TMP"
-            lz4 -dc "$INITRAMFS_PATH" | cpio -id 2>/dev/null
-
-            # Patch modules.load: remove entries for built-in modules
-            for ml in lib/modules/*/modules.load; do
-              if [ -f "$ml" ]; then
-                echo "  Patching $ml"
-                # Remove lines containing modules that are built-in
-                for builtin_pattern in virtio_mmio virtio_blk goldfish_pipe goldfish_address_space virtio_console; do
-                  sed -i "/${builtin_pattern}/d" "$ml"
-                done
-                echo "  Remaining modules: $(wc -l < "$ml")"
-              fi
-            done
-
-            # Repack initramfs
-            find . | cpio -H newc -o 2>/dev/null | lz4 -l -c > "$GITHUB_WORKSPACE/output/initramfs.img"
-            cd "$GITHUB_WORKSPACE"
-            rm -rf "$INITRAMFS_TMP"
-            echo "initramfs.img patched and copied"
+          # Copy initramfs.img (contains matching kernel modules)
+          # All drivers stay as modules — Android init handles loading them.
+          # When using the emulator, combine this with the stock ramdisk:
+          #   cat stock_ramdisk.img initramfs.img > combined.img
+          INITRAMFS_PATH=$(readlink -f "$OUTDIR/initramfs.img" 2>/dev/null || echo "$OUTDIR/initramfs.img")
+          if [ -f "$INITRAMFS_PATH" ]; then
+            cp "$INITRAMFS_PATH" ./output/initramfs.img
+            echo "initramfs.img copied"
             echo "initramfs size: $(du -h ./output/initramfs.img | cut -f1)"
           else
             echo "WARNING: initramfs.img not found in $OUTDIR"

@@ -74,9 +74,11 @@ jobs:
           # This doesn't expose the module in sysfs like CONFIG_KSU_DEBUG would
           # Must insert in sorted position for bazel defconfig validation
 
-          # Force SELinux permissive: append enforcing=0 to existing kernel cmdline.
-          # Required for ksud bootstrap on production (user) builds.
-          sed -i 's/^CONFIG_CMDLINE="\(.*\)"/CONFIG_CMDLINE="\1 enforcing=0 kernelsu.allow_shell=1"/' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
+          # Append kernelsu.allow_shell to kernel cmdline for shell root.
+          # NOTE: Do NOT add enforcing=0 here — it breaks adbd startup on
+          # both google_apis and google_apis_playstore images.
+          # SELinux can be set permissive post-boot via `su -c setenforce 0`.
+          sed -i 's/^CONFIG_CMDLINE="\(.*\)"/CONFIG_CMDLINE="\1 kernelsu.allow_shell=1"/' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
 
           # Build critical virtio drivers as built-in (=y) instead of modules (=m).
           # The emulator's first-stage init needs these available BEFORE module loading

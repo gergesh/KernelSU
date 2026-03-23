@@ -193,8 +193,10 @@ jobs:
             fi
 
             # Extract initramfs (LZ4 compressed CPIO)
+            # Use readlink to resolve symlinks in dist/
+            INITRAMFS_PATH=$(readlink -f "$OUTDIR/initramfs.img")
             cd "$INITRAMFS_TMP"
-            lz4 -dc "$OUTDIR/initramfs.img" | cpio -id 2>/dev/null
+            lz4 -dc "$INITRAMFS_PATH" | cpio -id 2>/dev/null
 
             # Patch modules.load: remove entries for built-in modules
             for ml in lib/modules/*/modules.load; do

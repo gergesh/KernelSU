@@ -80,10 +80,13 @@ jobs:
           # SELinux can be set permissive post-boot via `su -c setenforce 0`.
           sed -i 's/^CONFIG_CMDLINE="\(.*\)"/CONFIG_CMDLINE="\1 kernelsu.allow_shell=1"/' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
 
-          # Keep all drivers as modules (=m). Android init relies on uevent
-          # cold-boot replay to discover devices — built-in drivers fire uevents
-          # before init starts, causing partition discovery to fail.
-          # The combined ramdisk (stock + our initramfs) provides matching modules.
+          # Commit all changes in kernel tree to avoid -dirty suffix in version.
+          # The stock kernel version is e.g. 6.1.23-android14-4-00257-g7e35917775b8-ab9964412
+          # Without this, our changes produce: 6.1.23-android14-4-g7e35917775b8-dirty
+          # The -dirty suffix causes module vermagic mismatch with our own initramfs.
+          cd $GKI_ROOT/common
+          git add -A && git commit -m "KernelSU + config patches" --allow-empty 2>/dev/null || true
+          cd $GKI_ROOT
 
           # Disable defconfig validation (our config changes are intentional)
           sed -i 's/check_defconfig/true #check_defconfig/' $GKI_ROOT/common/build.config.gki.aarch64 2>/dev/null || true

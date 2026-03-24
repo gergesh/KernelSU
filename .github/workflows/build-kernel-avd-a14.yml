@@ -80,10 +80,13 @@ jobs:
           # SELinux can be set permissive post-boot via `su -c setenforce 0`.
           sed -i 's/^CONFIG_CMDLINE="\(.*\)"/CONFIG_CMDLINE="\1 kernelsu.allow_shell=1"/' $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
 
-          # Commit all changes in kernel tree to avoid -dirty suffix in version.
-          # The stock kernel version is e.g. 6.1.23-android14-4-00257-g7e35917775b8-ab9964412
-          # Without this, our changes produce: 6.1.23-android14-4-g7e35917775b8-dirty
-          # The -dirty suffix causes module vermagic mismatch with our own initramfs.
+          # Allow loading modules with mismatched version strings.
+          # Our kernel version differs from stock (extra commit from KSU patches),
+          # so stock ramdisk modules would fail vermagic check without this.
+          # rootAVD merges stock + custom modules, but some stock modules remain.
+          echo "CONFIG_MODULE_FORCE_LOAD=y" >> $GKI_ROOT/common/arch/arm64/configs/gki_defconfig
+
+          # Commit all changes to avoid -dirty suffix in kernel version.
           cd $GKI_ROOT/common
           git add -A && git commit -m "KernelSU + config patches" --allow-empty 2>/dev/null || true
           cd $GKI_ROOT

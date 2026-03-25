@@ -23,8 +23,13 @@ jobs:
         run: |
           cd /tmp/android-kernel
           cp $GITHUB_WORKSPACE/sysfs-hide/kernel-config .config
+          # Fix: disable auto version, set exact localversion to match emulator
+          sed -i '/CONFIG_LOCALVERSION_AUTO/d' .config
+          sed -i '/CONFIG_LOCALVERSION=/d' .config
           sed -i '/CONFIG_TRIM_UNUSED_KSYMS/d' .config
-          echo "# CONFIG_TRIM_UNUSED_KSYMS is not set" >> .config
+          echo '# CONFIG_LOCALVERSION_AUTO is not set' >> .config
+          echo 'CONFIG_LOCALVERSION="-android14-4-00257-g7e35917775b8-ab9964412"' >> .config
+          echo '# CONFIG_TRIM_UNUSED_KSYMS is not set' >> .config
           make ARCH=arm64 LLVM=1 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
           make ARCH=arm64 LLVM=1 CROSS_COMPILE=aarch64-linux-gnu- modules_prepare -j$(nproc)
           echo "Kernel release: $(cat include/config/kernel.release)"

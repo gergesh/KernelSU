@@ -15,16 +15,14 @@ jobs:
 
       - name: Clone kernel at exact emulator commit
         run: |
-          # The Android 14 emulator kernel is at this specific commit
-          git clone https://android.googlesource.com/kernel/common kernel
-          cd kernel
+          git clone https://android.googlesource.com/kernel/common /tmp/android-kernel
+          cd /tmp/android-kernel
           git checkout 7e35917775b8
 
       - name: Prepare kernel for module building
         run: |
-          cd kernel
-          cp ../sysfs-hide/kernel-config .config
-          # Ensure modules are enabled
+          cd /tmp/android-kernel
+          cp $GITHUB_WORKSPACE/sysfs-hide/kernel-config .config
           sed -i '/CONFIG_TRIM_UNUSED_KSYMS/d' .config
           echo "# CONFIG_TRIM_UNUSED_KSYMS is not set" >> .config
           make ARCH=arm64 LLVM=1 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
@@ -33,14 +31,14 @@ jobs:
 
       - name: Build sysfs_hide module
         run: |
-          mkdir -p build
-          cp sysfs-hide/sysfs_hide.c build/sysfs_hide.c
-          echo 'obj-m := sysfs_hide.o' > build/Makefile
-          make -C kernel M=$(pwd)/build ARCH=arm64 LLVM=1 CROSS_COMPILE=aarch64-linux-gnu- modules
-          modinfo build/sysfs_hide.ko
+          mkdir -p /tmp/build
+          cp sysfs-hide/sysfs_hide.c /tmp/build/sysfs_hide.c
+          echo 'obj-m := sysfs_hide.o' > /tmp/build/Makefile
+          make -C /tmp/android-kernel M=/tmp/build ARCH=arm64 LLVM=1 CROSS_COMPILE=aarch64-linux-gnu- modules
+          modinfo /tmp/build/sysfs_hide.ko
 
       - name: Upload module
         uses: actions/upload-artifact@v4
         with:
           name: sysfs_hide_module
-          path: build/sysfs_hide.ko
+          path: /tmp/build/sysfs_hide.ko

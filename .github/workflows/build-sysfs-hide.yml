@@ -1,0 +1,46 @@
+name: Build sysfs_hide kernel module
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc flex bison libelf-dev libssl-dev clang lld llvm
+
+      - name: Clone kernel at exact emulator commit
+        run: |
+          # The Android 14 emulator kernel is at this specific commit
+          git clone https://android.googlesource.com/kernel/common kernel
+          cd kernel
+          git checkout 7e35917775b8
+
+      - name: Prepare kernel for module building
+        run: |
+          cd kernel
+          cp ../sysfs-hide/kernel-config .config
+          # Ensure modules are enabled
+          sed -i '/CONFIG_TRIM_UNUSED_KSYMS/d' .config
+          echo "# CONFIG_TRIM_UNUSED_KSYMS is not set" >> .config
+          make ARCH=arm64 LLVM=1 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          make ARCH=arm64 LLVM=1 CROSS_COMPILE=aarch64-linux-gnu- modules_prepare -j$(nproc)
+          echo "Kernel release: $(cat include/config/kernel.release)"
+
+      - name: Build sysfs_hide module
+        run: |
+          mkdir -p build
+          cp sysfs-hide/sysfs_hide.c build/sysfs_hide.c
+          echo 'obj-m := sysfs_hide.o' > build/Makefile
+          make -C kernel M=$(pwd)/build ARCH=arm64 LLVM=1 CROSS_COMPILE=aarch64-linux-gnu- modules
+          modinfo build/sysfs_hide.ko
+
+      - name: Upload module
+        uses: actions/upload-artifact@v4
+        with:
+          name: sysfs_hide_module
+          path: build/sysfs_hide.ko

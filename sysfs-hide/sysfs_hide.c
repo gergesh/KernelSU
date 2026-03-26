@@ -1,16 +1,12 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/kprobes.h>
-#include <linux/dirent.h>
-#include <linux/uaccess.h>
-#include <linux/slab.h>
-#include <linux/file.h>
-#include <linux/dcache.h>
 #include <linux/fs.h>
+#include <linux/dcache.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("kosemu");
-MODULE_DESCRIPTION("Hide emulator sysfs entries from getdents64");
+MODULE_DESCRIPTION("Hide emulator sysfs entries via filldir64 kprobe");
 
 static const char *filter_patterns[] = {
     "goldfish", "virtio", "ranchu", "qemu", NULL
@@ -25,106 +21,85 @@ static int matches_filter(const char *name)
     return 0;
 }
 
-struct saved_args {
-    int fd;
-    void __user *buf;
-    int is_sysfs;
-};
+/* Track whether the current iterate_dir is on a sysfs path */
+static DEFINE_PER_CPU(int, in_sysfs_dir);
 
-static int getdents64_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+/* kprobe on iterate_dir entry: check if this is a sysfs directory */
+static int iterate_dir_entry(struct kprobe *p, struct pt_regs *regs)
 {
-    struct saved_args *data = (struct saved_args *)ri->data;
-    struct fd f;
-    char pathbuf[256];
+    /* x0 = struct file *file */
+    struct file *file = (struct file *)regs->regs[0];
+    char buf[256];
     char *path;
 
-    data->fd = (int)regs->regs[0];
-    data->buf = (void __user *)regs->regs[1];
-    data->is_sysfs = 0;
+    this_cpu_write(in_sysfs_dir, 0);
 
-    f = fdget(data->fd);
-    if (f.file) {
-        path = d_path(&f.file->f_path, pathbuf, sizeof(pathbuf));
+    if (file) {
+        path = d_path(&file->f_path, buf, sizeof(buf));
         if (!IS_ERR(path)) {
             if (strstr(path, "/sys/devices/platform") ||
                 strstr(path, "/sys/bus") ||
                 strstr(path, "/sys/class"))
-                data->is_sysfs = 1;
+                this_cpu_write(in_sysfs_dir, 1);
         }
-        fdput(f);
     }
     return 0;
 }
 
-static int getdents64_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+static struct kprobe iterate_dir_kp = {
+    .symbol_name = "iterate_dir",
+    .pre_handler = iterate_dir_entry,
+};
+
+/* kprobe on filldir64: skip entries matching filter if we're in sysfs */
+static int filldir64_entry(struct kprobe *p, struct pt_regs *regs)
 {
-    struct saved_args *data = (struct saved_args *)ri->data;
-    long ret;
-    char *kbuf;
-    int src, dst;
-    struct linux_dirent64 *d;
+    /* x1 = const char *name */
+    const char *name = (const char *)regs->regs[1];
 
-    if (!data->is_sysfs)
+    if (!this_cpu_read(in_sysfs_dir))
         return 0;
 
-    ret = regs_return_value(regs);
-    if (ret <= 0)
-        return 0;
-
-    kbuf = kmalloc(ret, GFP_ATOMIC);
-    if (!kbuf)
-        return 0;
-
-    if (copy_from_user(kbuf, data->buf, ret)) {
-        kfree(kbuf);
-        return 0;
+    if (matches_filter(name)) {
+        /* Skip this entry by making filldir64 return immediately.
+         * Set PC to the return address (LR) and set x0=true (continue iterating) */
+        regs->pc = regs->regs[30]; /* LR = return address */
+        regs->regs[0] = 1;         /* return true = continue */
+        return 1; /* skip the probed instruction (don't execute filldir64) */
     }
-
-    src = 0;
-    dst = 0;
-    while (src < ret) {
-        d = (struct linux_dirent64 *)(kbuf + src);
-        if (d->d_reclen == 0 || d->d_reclen > ret - src)
-            break;
-        if (!matches_filter(d->d_name)) {
-            if (dst != src)
-                memmove(kbuf + dst, kbuf + src, d->d_reclen);
-            dst += d->d_reclen;
-        }
-        src += d->d_reclen;
-    }
-
-    if (dst != ret) {
-        if (!copy_to_user(data->buf, kbuf, dst))
-            regs->regs[0] = dst;
-    }
-
-    kfree(kbuf);
     return 0;
 }
 
-static struct kretprobe getdents64_kretprobe = {
-    .handler = getdents64_ret_handler,
-    .entry_handler = getdents64_entry_handler,
-    .data_size = sizeof(struct saved_args),
-    .maxactive = 20,
-    .kp.symbol_name = "__arm64_sys_getdents64",
+static struct kprobe filldir64_kp = {
+    .symbol_name = "filldir64",
+    .pre_handler = filldir64_entry,
 };
 
 static int __init sysfs_hide_init(void)
 {
-    int ret = register_kretprobe(&getdents64_kretprobe);
+    int ret;
+
+    ret = register_kprobe(&iterate_dir_kp);
     if (ret < 0) {
-        pr_err("sysfs_hide: kretprobe failed: %d\n", ret);
+        pr_err("sysfs_hide: iterate_dir kprobe failed: %d\n", ret);
         return ret;
     }
-    pr_info("sysfs_hide: loaded\n");
+
+    ret = register_kprobe(&filldir64_kp);
+    if (ret < 0) {
+        pr_err("sysfs_hide: filldir64 kprobe failed: %d\n", ret);
+        unregister_kprobe(&iterate_dir_kp);
+        return ret;
+    }
+
+    pr_info("sysfs_hide: loaded, hooking iterate_dir + filldir64\n");
     return 0;
 }
 
 static void __exit sysfs_hide_exit(void)
 {
-    unregister_kretprobe(&getdents64_kretprobe);
+    unregister_kprobe(&filldir64_kp);
+    unregister_kprobe(&iterate_dir_kp);
     pr_info("sysfs_hide: unloaded\n");
 }
 
